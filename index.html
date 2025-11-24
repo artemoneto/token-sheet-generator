@@ -41,6 +41,14 @@
                 </select>
             </div>
             <div>
+                <label for="double-sided" id="double-sided-label">Double-sided printing</label><br>
+                <select name="double-sided" id="double-sided" onchange="parseTokens();">
+                    <option id="no" value="no" selected>No</option>
+                    <option id="long-edge" value="long-edge">Yes, long edge</option>
+                    <option id="short-edge" value="short-edge">Yes, short edge</option>
+                </select>
+            </div>
+            <div>
                 <label for="token-width" id="token-width-label">Medium token width</label><br>
                 <input type="text" name="token-width" id="token-width" value="26.0" onchange="checkInput(); parseTokens();">
             </div>

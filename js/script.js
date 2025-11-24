@@ -22,6 +22,7 @@ function exportProject() {
     paddingLeft: document.getElementById('padding-left').value,
     paddingRight: document.getElementById('padding-right').value,
     renderBorders: document.getElementById('render-borders').checked,
+    doubleSided: document.getElementById('double-sided').value,
     tokens: tokensList
   };
   let a = document.createElement('a');
@@ -46,6 +47,7 @@ function loadProject(input) {
     document.getElementById('padding-left').value = project.paddingLeft;
     document.getElementById('padding-right').value = project.paddingRight;
     document.getElementById('render-borders').checked = project.renderBorders;
+    document.getElementById('double-sided').value = project.doubleSided || 'no';
     tokensList = project.tokens;
     showTokens();
     parseTokens();
@@ -62,6 +64,7 @@ function resetDefault() {
   document.getElementById('padding-left').value = '14.0';
   document.getElementById('padding-right').value = '14.0';
   document.getElementById('render-borders').checked = true;
+  document.getElementById('double-sided').value = 'no';
 }
 
 function checkInput() {
@@ -172,8 +175,10 @@ function drawBorders(page, converter, paddingTop, paddingBottom, paddingLeft, pa
 
 async function createPdf(tokenPages, pageFormat, paddingTop, paddingBottom, paddingLeft, paddingRight, tokenPadding) {
   let renderBorders = document.getElementById('render-borders').checked;
+  let doubleSided = document.getElementById('double-sided').value;
   let pdfDoc = await PDFLib.PDFDocument.create();
   let converter;
+  let tokenCounts = {};
   switch (document.getElementById('units').value) {
     case 'mm':
       converter = mmToPt;
@@ -209,33 +214,161 @@ async function createPdf(tokenPages, pageFormat, paddingTop, paddingBottom, padd
       });
     }
   }
-  // Rendering
-  for (let i = 0; i < tokenPages.length; i++) {
-    let page = pdfDoc.addPage([pageFormat.width, pageFormat.height]);
-    if (renderBorders) {
-      drawBorders(page, converter, paddingTop, paddingBottom, paddingLeft, paddingRight);
-    }
-    // Place tokens on a doc
-    for (let j = 0; j < tokenPages[i].length; j++) {
-      let mimeType = tokenPages[i][j].img.split(/[\s:;]+/, 3)[1];
-      let image;
-      switch (mimeType) {
-        case 'image/png':
-          image = await pdfDoc.embedPng(tokenPages[i][j].img);
-          break;
-        case 'image/jpeg':
-          image = await pdfDoc.embedJpg(tokenPages[i][j].img);
-          break;
-        default:
-          image = null;
-      }
-      page.drawImage(image, {
-        x: converter(tokenPages[i][j].x + tokenPadding / 2) + converter(paddingLeft),
-        y: pageFormat.height - converter(tokenPages[i][j].y - tokenPadding / 2) - converter(tokenPages[i][j].size) - converter(paddingTop),
-        width: converter(tokenPages[i][j].size - tokenPadding),
-        height: converter(tokenPages[i][j].size - tokenPadding)
+  
+  // Helper to draw counter with rotation
+  const drawCounterRotated = async (page, x, y, number, size, rotated = false) => {
+      page.drawCircle({
+          x: x,
+          y: y,
+          size: size / 2,
+          color: PDFLib.rgb(1, 1, 1),
+          borderColor: PDFLib.rgb(0, 0, 0),
+          borderWidth: 1
       });
-    }
+      const fontSize = size * 0.6;
+      const text = number.toString();
+      const font = await pdfDoc.embedFont(PDFLib.StandardFonts.Helvetica);
+      const textWidth = font.widthOfTextAtSize(text, fontSize);
+      let angle, textPosition;
+      if (rotated){
+        angle = PDFLib.degrees(180);
+        textPosition = {
+          x: x + textWidth / 2,
+          y: y + (fontSize / 3)
+        }
+      } else {
+        angle = PDFLib.degrees(0);
+        textPosition = {
+          x: x - textWidth / 2,
+          y: y - (fontSize / 3)
+        }
+      }
+      
+      page.drawText(text, {
+          x: textPosition.x,
+          y: textPosition.y,
+          size: fontSize,
+          font: font,
+          color: PDFLib.rgb(0, 0, 0),
+          rotate: angle
+      });
+  };
+  
+  for (let i = 0; i < tokenPages.length; i++) {
+      // Prepare data for this page
+      let pageTokensData = [];
+      
+      for (let j = 0; j < tokenPages[i].length; j++) {
+          let tokenData = tokenPages[i][j];
+          let originalToken = tokensList.find(t => t.img === tokenData.img);
+          let number = null;
+          if (originalToken && originalToken.count > 1) {
+              if (!tokenCounts[originalToken.img]) tokenCounts[originalToken.img] = 0;
+              tokenCounts[originalToken.img]++;
+              number = tokenCounts[originalToken.img];
+          }
+          pageTokensData.push({ ...tokenData, number: number, originalToken: originalToken });
+      }
+      // Draw Front Page
+      let page = pdfDoc.addPage([pageFormat.width, pageFormat.height]);
+      if (renderBorders) drawBorders(page, converter, paddingTop, paddingBottom, paddingLeft, paddingRight);
+      
+      for (let item of pageTokensData) {
+          let mimeType = item.img.split(/[\s:;]+/, 3)[1];
+          let image;
+          switch (mimeType) {
+            case 'image/png': image = await pdfDoc.embedPng(item.img); break;
+            case 'image/jpeg': image = await pdfDoc.embedJpg(item.img); break;
+            default: image = null;
+          }
+          let x = converter(item.x + tokenPadding / 2) + converter(paddingLeft);
+          let y = pageFormat.height - converter(item.y - tokenPadding / 2) - converter(item.size) - converter(paddingTop);
+          let width = converter(item.size - tokenPadding);
+          let height = converter(item.size - tokenPadding);
+          page.drawImage(image, { x, y, width, height });
+          if (item.number !== null) {
+              let sizeVal = item.originalToken.counterSize !== undefined ? item.originalToken.counterSize : 5;
+              let offsetVal = item.originalToken.counterOffset !== undefined ? item.originalToken.counterOffset : 3;
+              let counterSize = converter(sizeVal); 
+              let counterOffset = converter(offsetVal);
+              let cx = x + width / 2;
+              let cy = y + counterOffset;
+              await drawCounterRotated(page, cx, cy, item.number, counterSize);
+          }
+      }
+      // Draw Back Page
+      if (doubleSided !== 'no') {
+          let backPage = pdfDoc.addPage([pageFormat.width, pageFormat.height]);
+          let backPaddingLeft = paddingLeft;
+          let backPaddingRight = paddingRight;
+          let backPaddingTop = paddingTop;
+          let backPaddingBottom = paddingBottom;
+          if (doubleSided === 'long-edge') {
+            backPaddingLeft = paddingRight;
+            backPaddingRight = paddingLeft;
+          } else if (doubleSided === 'short-edge') {
+            backPaddingTop = paddingBottom;
+            backPaddingBottom = paddingTop;
+          }
+          if (renderBorders) drawBorders(backPage, converter, backPaddingTop, backPaddingBottom, backPaddingLeft, backPaddingRight);
+          for (let item of pageTokensData) {
+               let mimeType = item.img.split(/[\s:;]+/, 3)[1];
+               let image;
+               switch (mimeType) {
+                 case 'image/png': image = await pdfDoc.embedPng(item.img); break;
+                 case 'image/jpeg': image = await pdfDoc.embedJpg(item.img); break;
+                 default: image = null;
+               }
+               
+               let relX = item.x;
+               let relY = item.y;
+               let tokenSize = item.size;
+               let imageWidth = converter(tokenSize - tokenPadding);
+               if (doubleSided === 'long-edge') {
+                   let frontAbsX = converter(paddingLeft + relX + tokenPadding / 2);
+                   let backAbsX = pageFormat.width - frontAbsX - imageWidth;
+                   
+                   backPage.drawImage(image, {
+                     x: backAbsX,
+                     y: pageFormat.height - converter(relY - tokenPadding / 2) - converter(tokenSize) - converter(paddingTop),
+                     width: imageWidth,
+                     height: imageWidth
+                   });
+                   
+                   if (item.number !== null) {
+                       let sizeVal = item.originalToken.counterSize !== undefined ? item.originalToken.counterSize : 5;
+                       let offsetVal = item.originalToken.counterOffset !== undefined ? item.originalToken.counterOffset : 3;
+                       let counterSize = converter(sizeVal);
+                       let counterOffset = converter(offsetVal);
+                       let cx = pageFormat.width - (frontAbsX + imageWidth / 2);
+                       let cy = pageFormat.height - converter(relY - tokenPadding / 2) - converter(tokenSize) - converter(paddingTop) + counterOffset;
+                       await drawCounterRotated(backPage, cx, cy, item.number, counterSize);
+                   }
+               } else if (doubleSided === 'short-edge') {
+                   let frontAbsX = converter(paddingLeft + relX + tokenPadding / 2);
+                   let frontAbsY = pageFormat.height - converter(relY - tokenPadding / 2) - converter(tokenSize) - converter(paddingTop);
+                   let backAbsY = pageFormat.height - frontAbsY - imageWidth;
+                   
+                   backPage.drawImage(image, {
+                     x: frontAbsX + imageWidth,
+                     y: backAbsY + imageWidth,
+                     width: imageWidth,
+                     height: imageWidth,
+                     rotate: PDFLib.degrees(180)
+                   });
+                   
+                   if (item.number !== null) {
+                       let sizeVal = item.originalToken.counterSize !== undefined ? item.originalToken.counterSize : 5;
+                       let offsetVal = item.originalToken.counterOffset !== undefined ? item.originalToken.counterOffset : 3;
+                       let counterSize = converter(sizeVal);
+                       let counterOffset = converter(offsetVal);
+                       let cx = frontAbsX + imageWidth / 2;
+                       let cy = (backAbsY + imageWidth) - counterOffset;
+                       await drawCounterRotated(backPage, cx, cy, item.number, counterSize, rotated=true);
+                   }
+               }
+          }
+      }
   }
   let pdfBinary = await pdfDoc.save();
   let a = document.createElement('a');
@@ -374,6 +507,9 @@ function prerenderInCanvas(pages, pageFormat, paddingTop, paddingBottom, padding
   canvasContainer.innerHTML = `<canvas id="canvas" class="canvas" width="${pageFormat.width * scaleModifer} + 5" height="${pageFormat.height * pages.length * scaleModifer} + 5"></canvas>`;
   let canvas = document.getElementById('canvas');
   let ctx = canvas.getContext('2d');
+  
+  // Track token counts for preview
+  let tokenCounts = {};
   if (pages.length != 0) {
     for (let i = 0; i < pages.length; i++) {
       // Draw sheet borders
@@ -397,12 +533,50 @@ function prerenderInCanvas(pages, pageFormat, paddingTop, paddingBottom, padding
       // Draw tokens
       for (let j = 0; j < pages[i].length; j++) {
         let image = new Image();
-        image.onload = function () {
-          ctx.drawImage(image,
-            (paddingLeft + pages[i][j].x + tokenPadding / 2) * scaleModifer, (pageFormat.height * i + paddingTop + pages[i][j].y + tokenPadding / 2) * scaleModifer,
-            (pages[i][j].size - tokenPadding) * scaleModifer, (pages[i][j].size - tokenPadding) * scaleModifer);
+        let tokenData = pages[i][j];
+        
+        // Find original token to check for counter
+        let originalToken = tokensList.find(t => t.img === tokenData.img);
+        let number = null;
+        if (originalToken && originalToken.count > 1) {
+            if (!tokenCounts[originalToken.img]) tokenCounts[originalToken.img] = 0;
+            tokenCounts[originalToken.img]++;
+            number = tokenCounts[originalToken.img];
         }
-        image.src = pages[i][j].img;
+        image.onload = function () {
+          let x = (paddingLeft + tokenData.x + tokenPadding / 2) * scaleModifer;
+          let y = (pageFormat.height * i + paddingTop + tokenData.y + tokenPadding / 2) * scaleModifer;
+          let size = (tokenData.size - tokenPadding) * scaleModifer;
+          
+          ctx.drawImage(image, x, y, size, size);
+          
+          // Draw Counter
+          if (number !== null) {
+              let sizeVal = originalToken.counterSize !== undefined ? originalToken.counterSize : 5;
+              let offsetVal = originalToken.counterOffset !== undefined ? originalToken.counterOffset : 3;
+              
+              let counterSize = sizeVal * scaleModifer;
+              let counterOffset = offsetVal * scaleModifer;
+              
+              let cx = x + size / 2;
+              let cy = y + size - counterOffset;
+              
+              ctx.beginPath();
+              ctx.arc(cx, cy, counterSize / 2, 0, 2 * Math.PI);
+              ctx.fillStyle = 'white';
+              ctx.fill();
+              ctx.lineWidth = 1;
+              ctx.strokeStyle = 'black';
+              ctx.stroke();
+              
+              ctx.fillStyle = 'black';
+              ctx.font = `${counterSize * 0.6}px Helvetica`;
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(number, cx, cy);
+          }
+        }
+        image.src = tokenData.img;
       }
     }
   } else {  // If there's no tokens
@@ -470,6 +644,23 @@ function showTokens() {
   let tokensHTML = document.getElementById('tokens-list');
   tokensHTML.innerHTML = '';
   for (let i = 0; i < tokensList.length; i++) {
+    let counterInputs = '';
+    if (tokensList[i].count > 1) {
+       // Check if undefined, otherwise use value (even if 0), else default
+       let counterSize = tokensList[i].counterSize !== undefined ? tokensList[i].counterSize : 5;
+       let counterOffset = tokensList[i].counterOffset !== undefined ? tokensList[i].counterOffset : 3;
+       
+       // Ensure defaults are set in the object if missing (only if undefined)
+       if (tokensList[i].counterSize === undefined) tokensList[i].counterSize = counterSize;
+       if (tokensList[i].counterOffset === undefined) tokensList[i].counterOffset = counterOffset;
+       
+       counterInputs = `
+         <label for="counter-size-${i}" class="card-label">${dictionary['counter-size']}</label><br>
+         <input type="number" class="card-input" id="counter-size-${i}" value="${counterSize}" onchange="changeCounterSize(this); parseTokens();"><br>
+         <label for="counter-offset-${i}" class="card-label">${dictionary['counter-offset']}</label><br>
+         <input type="number" class="card-input" id="counter-offset-${i}" value="${counterOffset}" onchange="changeCounterOffset(this); parseTokens();"><br>
+       `;
+    }
     tokensHTML.innerHTML += `
     <li class="token-card" id="token-${i}" index="${i}">
       <table><tr>
@@ -479,7 +670,7 @@ function showTokens() {
         <td>
           <input type="text" class="card-input" id="card-text-${i}" value="${tokensList[i].name}" onchange="changeName(this);"><br>
           <label for="card-count-${i}" class="card-label" onChange="changeNumber(this)">${dictionary.count}</label><br>
-          <input type="number" class="card-input" id="card-count-${i}" value="${tokensList[i].count}" onchange="changeNumber(this); parseTokens();"><br>
+          <input type="number" class="card-input" id="card-count-${i}" value="${tokensList[i].count}" onchange="changeNumber(this); showTokens(); parseTokens();"><br>
           <label for="card-size-${i}" class="card-label">${dictionary.size}</label><br>
           <select name="card-size-${i}" class="card-input" id="card-size-${i}" index="${i}" onchange="changeSize(this); parseTokens();">
             <option value="tiny"${tokensList[i].size == 'tiny' ? ' selected' : ''}>${dictionary.tiny}</option>
@@ -488,7 +679,8 @@ function showTokens() {
             <option value="large"${tokensList[i].size == 'large' ? ' selected' : ''}>${dictionary.large}</option>
             <option value="huge"${tokensList[i].size == 'huge' ? ' selected' : ''}>${dictionary.huge}</option>
             <option value="gargantuan"${tokensList[i].size == 'gargantuan' ? ' selected' : ''}>${dictionary.gargantuan}</option>
-          </select>
+          </select><br>
+          ${counterInputs}
         </td>
         <td>
           <button id="card-delete-${i}" class="card-delete" onclick="deleteToken(this); parseTokens();">
@@ -512,6 +704,14 @@ function changeNumber(input) {
 
 function changeSize(input) {
   tokensList[getID(input)].size = input.value;
+}
+
+function changeCounterSize(input) {
+  tokensList[getID(input)].counterSize = parseFloat(input.value);
+}
+
+function changeCounterOffset(input) {
+  tokensList[getID(input)].counterOffset = parseFloat(input.value);
 }
 
 function deleteToken(button) {

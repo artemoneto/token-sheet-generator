@@ -17,7 +17,11 @@ const dictEn = {
     'render-borders-label': 'Render margins from the edge of the sheet',
     'export-pdf': 'Export to PDF',
     'add-token': 'Upload tokens',
-    'dragndrop-zone': 'Drop files here to upload'
+    'dragndrop-zone': 'Drop files here to upload',
+    'double-sided-label': 'Double-sided printing',
+    'no': 'No',
+    'long-edge': 'Yes, turn over the long edge',
+    'short-edge': 'Yes, turn over the short edge'
   },
   'tokens': {
     'count': 'Number of copies',
@@ -27,7 +31,9 @@ const dictEn = {
     'medium': 'Medium',
     'large': 'Large',
     'huge': 'Huge',
-    'gargantuan': 'Gargantuan'
+    'gargantuan': 'Gargantuan',
+    'counter-size': 'Counter size',
+    'counter-offset': 'Counter offset'
 
   }
 };
@@ -50,7 +56,11 @@ const dictRu = {
     'render-borders-label': 'Отрисовывать отступы от края листа',
     'export-pdf': 'Экспорт в PDF',
     'add-token': 'Загрузить токены',
-    'dragndrop-zone': 'Отпустите файлы здесь, чтобы загрузить'
+    'dragndrop-zone': 'Отпустите файлы здесь, чтобы загрузить',
+    'double-sided-label': 'Двусторонняя печать',
+    'no': 'Нет',
+    'long-edge': 'Да, переворот по длинному краю',
+    'short-edge': 'Да, переворот по короткому краю'
   },
   'tokens': {
     'count': 'Количество копий',
@@ -60,7 +70,9 @@ const dictRu = {
     'medium': 'Средний',
     'large': 'Большой',
     'huge': 'Огромный',
-    'gargantuan': 'Громадный'
+    'gargantuan': 'Громадный',
+    'counter-size': 'Размер счетчика',
+    'counter-offset': 'Смещение счетчика'
 
   }
 };
