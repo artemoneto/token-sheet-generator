@@ -178,7 +178,6 @@ async function createPdf(tokenPages, pageFormat, paddingTop, paddingBottom, padd
   let doubleSided = document.getElementById('double-sided').value;
   let pdfDoc = await PDFLib.PDFDocument.create();
   let converter;
-  let tokenCounts = {};
   switch (document.getElementById('units').value) {
     case 'mm':
       converter = mmToPt;
@@ -254,18 +253,25 @@ async function createPdf(tokenPages, pageFormat, paddingTop, paddingBottom, padd
       });
   };
   
+  // We need to track the current count for each token type (by index) across pages
+  let tokenCounts = {}; 
+  
   for (let i = 0; i < tokenPages.length; i++) {
       // Prepare data for this page
       let pageTokensData = [];
       
       for (let j = 0; j < tokenPages[i].length; j++) {
           let tokenData = tokenPages[i][j];
-          let originalToken = tokensList.find(t => t.img === tokenData.img);
+          // Use tokenIndex to find the specific token card
+          let originalToken = tokensList[tokenData.tokenIndex];
+          
           let number = null;
           if (originalToken && originalToken.count > 1) {
-              if (!tokenCounts[originalToken.img]) tokenCounts[originalToken.img] = 0;
-              tokenCounts[originalToken.img]++;
-              number = tokenCounts[originalToken.img];
+              // Use index as key for counting to handle duplicate images correctly
+              let countKey = tokenData.tokenIndex;
+              if (!tokenCounts[countKey]) tokenCounts[countKey] = 0;
+              tokenCounts[countKey]++;
+              number = tokenCounts[countKey];
           }
           pageTokensData.push({ ...tokenData, number: number, originalToken: originalToken });
       }
@@ -470,7 +476,7 @@ function parseTokens(exportPDF = false) {
               }
               // Place token if there's no intersections
               if (!isIntersection) {
-                pages[i].push({ x: x, y: y, size: tokenSize, img: tokensList[t].img });
+                pages[i].push({ x: x, y: y, size: tokenSize, img: tokensList[t].img, tokenIndex: t });
                 isPlaced = true;
                 break;
               }
@@ -485,7 +491,7 @@ function parseTokens(exportPDF = false) {
         }
         // Create new page if there's no more free space
         if (!isPlaced) {
-          pages.push([{ x: 0.0, y: 0.0, size: tokenSize, img: tokensList[t].img }]);
+          pages.push([{ x: 0.0, y: 0.0, size: tokenSize, img: tokensList[t].img, tokenIndex: t }]);
           isPlaced = true;
         }
       }
@@ -535,13 +541,15 @@ function prerenderInCanvas(pages, pageFormat, paddingTop, paddingBottom, padding
         let image = new Image();
         let tokenData = pages[i][j];
         
-        // Find original token to check for counter
-        let originalToken = tokensList.find(t => t.img === tokenData.img);
+        // Find original token using tokenIndex
+        let originalToken = tokensList[tokenData.tokenIndex];
+        
         let number = null;
         if (originalToken && originalToken.count > 1) {
-            if (!tokenCounts[originalToken.img]) tokenCounts[originalToken.img] = 0;
-            tokenCounts[originalToken.img]++;
-            number = tokenCounts[originalToken.img];
+            let countKey = tokenData.tokenIndex;
+            if (!tokenCounts[countKey]) tokenCounts[countKey] = 0;
+            tokenCounts[countKey]++;
+            number = tokenCounts[countKey];
         }
         image.onload = function () {
           let x = (paddingLeft + tokenData.x + tokenPadding / 2) * scaleModifer;
@@ -648,7 +656,7 @@ function showTokens() {
     if (tokensList[i].count > 1) {
        // Check if undefined, otherwise use value (even if 0), else default
        let counterSize = tokensList[i].counterSize !== undefined ? tokensList[i].counterSize : 5;
-       let counterOffset = tokensList[i].counterOffset !== undefined ? tokensList[i].counterOffset : 3;
+       let counterOffset = tokensList[i].counterOffset !== undefined ? tokensList[i].counterOffset : 3.5;
        
        // Ensure defaults are set in the object if missing (only if undefined)
        if (tokensList[i].counterSize === undefined) tokensList[i].counterSize = counterSize;
@@ -703,7 +711,53 @@ function changeNumber(input) {
 }
 
 function changeSize(input) {
-  tokensList[getID(input)].size = input.value;
+  let id = getID(input);
+  
+  // Get OLD scale factor before changing size
+  let oldScaleFactor = 1;
+  switch (tokensList[id].size) {
+    case 'tiny': oldScaleFactor = 0.5; break;
+    case 'small': oldScaleFactor = 0.75; break;
+    case 'medium': oldScaleFactor = 1; break;
+    case 'large': oldScaleFactor = 2; break;
+    case 'huge': oldScaleFactor = 3; break;
+    case 'gargantuan': oldScaleFactor = 4; break;
+    default: oldScaleFactor = 1;
+  }
+  
+  // Get NEW scale factor
+  let newScaleFactor = 1;
+  switch (input.value) {
+    case 'tiny': newScaleFactor = 0.5; break;
+    case 'small': newScaleFactor = 0.75; break;
+    case 'medium': newScaleFactor = 1; break;
+    case 'large': newScaleFactor = 2; break;
+    case 'huge': newScaleFactor = 3; break;
+    case 'gargantuan': newScaleFactor = 4; break;
+    default: newScaleFactor = 1;
+  }
+  
+  // Update the size
+  tokensList[id].size = input.value;
+  
+  // Get current counter values (or defaults if not set)
+  let currentSize = tokensList[id].counterSize !== undefined ? tokensList[id].counterSize : 5;
+  let currentOffset = tokensList[id].counterOffset !== undefined ? tokensList[id].counterOffset : 3.5;
+  
+  // Normalize to "medium" equivalent, then apply new scale
+  let newSize = (currentSize / oldScaleFactor) * newScaleFactor;
+  let newOffset = (currentOffset / oldScaleFactor) * newScaleFactor;
+  
+  // Update model
+  tokensList[id].counterSize = newSize;
+  tokensList[id].counterOffset = newOffset;
+  
+  // Update UI inputs if they exist
+  let sizeInput = document.getElementById(`counter-size-${id}`);
+  let offsetInput = document.getElementById(`counter-offset-${id}`);
+  
+  if (sizeInput) sizeInput.value = newSize;
+  if (offsetInput) offsetInput.value = newOffset;
 }
 
 function changeCounterSize(input) {
@@ -776,6 +830,7 @@ function uploadTokens(input) {
       showTokens();
       parseTokens();
       document.getElementById('loading-background').style['display'] = 'none';
+      input.value = ''; // Clear the input so the same file can be selected again
     }
   );
 }
